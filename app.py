@@ -31,7 +31,7 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# 最新レート取得（USD建て基準）
+# 最新レート取得（USD基準）
 # -------------------------
 def fetch_rates():
     try:
@@ -48,34 +48,32 @@ def fetch_rates():
 # -------------------------
 def get_pair_rate(pair, rates, usd_jpy):
     if pair=="GOLD":
-        gold_usd = 1900.0  # 仮のドル建てGOLD
-        return gold_usd  # 初期値はドル建て
+        return 1900.0  # USD建て
     elif pair=="USDJPY":
         return usd_jpy
     elif pair.endswith("JPY"):
         base = pair[:3]
         if base=="USD":
             return usd_jpy
+        elif base in rates:
+            # XXXJPY = USDJPY / (1 USD = XXX)
+            return usd_jpy / float(rates[base])
         else:
-            if base in rates:
-                # XXXJPY = USDJPY / (1 USD = base currency)
-                return usd_jpy / float(rates[base])
-            else:
-                return usd_jpy
+            return usd_jpy
     else:  # ドル建てFX
         base = pair[:3]
         quote = pair[3:]
-        if quote=="USD" and base in rates:
-            # 1USD = rate[base] → 1 base = 1/rate USD → 円建て = 1/rate * USDJPY
-            return (1/float(rates[base])) * usd_jpy
-        elif base=="USD" and quote in rates:
-            # 1USD = 1 USD → 1 USD = rate[quote] → 1USD=rate USD → 円建て = rate * USDJPY
-            return float(rates[quote]) * usd_jpy
+        if base=="USD" and quote in rates:
+            # USD/XXX → USDJPY ÷ rate
+            return usd_jpy / float(rates[quote])
+        elif quote=="USD" and base in rates:
+            # XXX/USD → USDJPY × rate
+            return usd_jpy * float(rates[base])
         else:
             return usd_jpy
 
 # -------------------------
-# 計算ロジック
+# 分割エントリー計算
 # -------------------------
 def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop, upper, lower, usd_jpy_rate):
     division = int(division)
@@ -133,7 +131,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 # -------------------------
 # Streamlit UI
 # -------------------------
-st.title("分割エントリー計算アプリ（正確版）")
+st.title("分割エントリー計算アプリ（正確円建て対応）")
 
 mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
 pair = st.selectbox("通貨ペア/GOLD", CURRENCY_PAIRS)
