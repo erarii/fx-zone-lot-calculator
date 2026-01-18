@@ -131,7 +131,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 # -------------------------
 # Streamlit UI
 # -------------------------
-st.title("分割エントリー計算アプリ（正確円建て対応）")
+st.title("分割エントリー計算アプリ（円建て正確版）")
 
 mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
 pair = st.selectbox("通貨ペア/GOLD", CURRENCY_PAIRS)
