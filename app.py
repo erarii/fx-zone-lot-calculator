@@ -31,19 +31,48 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# 最新レート取得
+# 最新レート取得（USD建て基準）
 # -------------------------
-def fetch_all_rates():
-    """通貨ペアとGOLDのレートを取得"""
+def fetch_rates():
+    """
+    USD建ての各通貨レートとUSDJPYを取得。
+    JPY建て通貨ペアは後で USDJPY を掛けて算出。
+    GOLD はドル建て。
+    """
     try:
         url = "https://cdn.moneyconvert.net/api/latest.json"
         response = requests.get(url, timeout=5)
         data = response.json().get("rates", {})
-        # USDJPY は必須
+        # USDJPY
         usd_jpy = float(data.get("JPY", 150.0))
         return data, usd_jpy
     except:
         return {}, 150.0
+
+def get_pair_rate(pair, rates, usd_jpy):
+    """
+    通貨ペアごとの最新レートを返す
+    """
+    if pair == "GOLD":
+        return 1900.0  # 仮のドル建てGOLD
+    elif pair == "USDJPY":
+        return usd_jpy
+    elif pair.endswith("JPY"):
+        base = pair[:3]
+        if base in rates:
+            return float(rates[base]) * usd_jpy  # USD建て×USDJPY
+        else:
+            return usd_jpy
+    else:
+        base = pair[:3]
+        quote = pair[3:]
+        if base in rates and quote=="USD":
+            return float(rates[base])
+        elif quote in rates:
+            # USD建て換算
+            return 1.0 / float(rates[quote])
+        else:
+            return 1.0
 
 # -------------------------
 # 計算ロジック
@@ -104,7 +133,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 # -------------------------
 # Streamlit UI
 # -------------------------
-st.title("分割エントリー計算アプリ（最新レート初期値対応）")
+st.title("分割エントリー計算アプリ（全ペア最新レート対応）")
 
 # モード選択
 mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
@@ -118,28 +147,8 @@ fmt = f"%.{decimals}f"
 # -------------------------
 # 最新レート取得
 # -------------------------
-rates_data, usd_jpy_rate = fetch_all_rates()
-
-# 初期値決定
-if pair=="GOLD":
-    current_price = 1900.0  # 仮のドル建てGOLD価格
-elif pair in rates_data:
-    current_price = float(rates_data[pair])
-elif pair.endswith("JPY"):
-    # JPY建て通貨でUSDJPYが必要なら掛ける
-    base = pair[:3]
-    if base in rates_data:
-        current_price = float(rates_data[base])*usd_jpy_rate
-    else:
-        current_price = usd_jpy_rate
-else:
-    # USD建てFX
-    base = pair[:3]
-    quote = pair[3:]
-    if base in rates_data and quote=="USD":
-        current_price = float(rates_data[base])
-    else:
-        current_price = 1.1
+rates_data, usd_jpy_rate = fetch_rates()
+current_price = get_pair_rate(pair, rates_data, usd_jpy_rate)
 
 # ゾーン上限下限・平均建値・ストップ
 upper = st.number_input("ゾーン上限", value=current_price, format=fmt)
