@@ -77,7 +77,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
             diff = stop - p
         else:
             diff = p - stop
-        diff = abs(diff)  # 符号無視して絶対値
+        diff = abs(diff)
         # USD建て・GOLDはUSDJPYを掛けて円換算
         if pair=="GOLD" or (not pair.endswith("JPY") and pair!="GOLD"):
             diff *= usd_jpy_rate
@@ -116,24 +116,38 @@ direction = st.radio("方向", ["buy", "sell"])
 decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
-# ゾーン上限下限
-upper_default = 150.0 if "JPY" in pair else 1.0
-lower_default = 149.5 if "JPY" in pair else 0.995
-upper = st.number_input("ゾーン上限", value=upper_default, format=fmt)
-lower = st.number_input("ゾーン下限", value=lower_default, format=fmt)
+# -------------------------
+# 最新レートを取得してデフォルト値に設定
+# -------------------------
+try:
+    usd_jpy_rate = fetch_usdjpy() or 150.0
+except:
+    usd_jpy_rate = 150.0
 
-# 分割・ウェイト・平均建値・ストップ・最大損失
+# 初期レート決定
+if pair=="GOLD":
+    current_price = 1900.0  # 仮のドル建てゴールド価格
+elif pair.endswith("JPY"):
+    current_price = usd_jpy_rate
+else:
+    current_price = 1.1  # USD建てFXの参考値
+
+# ゾーン上限下限・平均建値・ストップ
+upper = st.number_input("ゾーン上限", value=current_price, format=fmt)
+lower = st.number_input("ゾーン下限", value=current_price*0.995, format=fmt)
+avg_price = st.number_input("目標平均建値", value=current_price, format=fmt)
+stop = st.number_input("ストップ価格", value=current_price*0.99, format=fmt)
+
+# 分割・ウェイト・最大損失
 division = st.number_input("分割数", min_value=1, max_value=5, value=3, step=1)
 weights_input = st.text_input("ウェイト（カンマ区切り）例：2,2,4", value="2,2,4")
 weights = [w.strip() for w in weights_input.split(",")]
-avg_price = st.number_input("目標平均建値", value=upper_default, format=fmt)
-stop = st.number_input("ストップ価格", value=lower_default, format=fmt)
 max_loss = st.number_input("最大損失（円）", value=10000.0)
 
 # 成行モードの市場価格
 market_price = None
 if mode=="成行起点型":
-    market_price = st.number_input("成行価格", value=upper_default, format=fmt)
+    market_price = st.number_input("成行価格", value=current_price, format=fmt)
     if direction=="buy":
         upper = market_price
     else:
@@ -141,14 +155,12 @@ if mode=="成行起点型":
 
 # 計算ボタン
 if st.button("計算"):
-    usd_jpy_rate = 1.0
+    # USD建てFX/GOLDの円換算
     if pair=="GOLD" or (not pair.endswith("JPY") and pair!="GOLD"):
-        usd_jpy_rate = fetch_usdjpy()
-        if usd_jpy_rate is None:
-            st.warning("USD/JPY レート取得失敗。手動入力してください。")
-            usd_jpy_rate = st.number_input("USD/JPY換算レート", value=150.0)
-        else:
-            st.write(f"最新 USD/JPY: {usd_jpy_rate:.3f}（自動取得）")
+        usd_jpy_display = usd_jpy_rate
+        st.write(f"最新 USD/JPY: {usd_jpy_display:.3f}")
+    else:
+        usd_jpy_display = 1.0
 
     try:
         result = calc_positions(
@@ -161,7 +173,7 @@ if st.button("計算"):
             stop=stop,
             upper=upper,
             lower=lower,
-            usd_jpy_rate=usd_jpy_rate
+            usd_jpy_rate=usd_jpy_display
         )
 
         st.subheader("計算結果")
