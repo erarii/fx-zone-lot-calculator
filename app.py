@@ -52,43 +52,39 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
     division = int(division)
     weights = [float(w) for w in weights]
 
-    # divisionとweightsの長さ確認
     if len(weights) != division:
         raise ValueError(f"ウェイトの数({len(weights)})と分割数({division})が一致していません。")
 
     unit = LOT_INFO["GOLD"] if pair=="GOLD" else LOT_INFO["FX"]
 
-    # 分割価格
-    margin = 0.01 if pair=="GOLD" or "JPY" in pair else 0.0001
-    effective_upper = upper - margin if direction=="buy" else upper + margin
-    effective_lower = lower + margin if direction=="buy" else lower - margin
-
-    if division == 1:
+    # 分割価格（上限-下限を均等分割）
+    if division==1:
         prices = [avg_price]
     else:
-        prices = [effective_upper - i*(effective_upper-effective_lower)/(division-1) for i in range(division)]
+        prices = [upper - i*(upper-lower)/(division-1) for i in range(division)]
 
     # 建値平均補正
     total_weighted_price = sum([w*p for w,p in zip(weights, prices)])
     total_weight = sum(weights)
-    current_avg = total_weighted_price / total_weight if total_weight !=0 else 1
+    current_avg = total_weighted_price / total_weight if total_weight != 0 else avg_price
     scale = avg_price / current_avg if current_avg != 0 else 1
     weights = [w*scale for w in weights]
 
-    # 損失計算
+    # 損失計算（常に正の値になるように）
     loss_per_unit = []
     for p in prices:
         if direction=="buy":
-            diff = max(stop - p, 0)
+            diff = stop - p
         else:
-            diff = max(p - stop, 0)
+            diff = p - stop
+        diff = abs(diff)  # 符号無視して絶対値
+        # USD建て・GOLDはUSDJPYを掛けて円換算
+        if pair=="GOLD" or (not pair.endswith("JPY") and pair!="GOLD"):
+            diff *= usd_jpy_rate
         loss_per_unit.append(diff)
 
-    # USD建てペア/GOLDはUSDJPY換算
-    if pair=="GOLD" or (not pair.endswith("JPY") and pair!="GOLD"):
-        total_loss = sum([w*unit*l*usd_jpy_rate for w,l in zip(weights, loss_per_unit)])
-    else:
-        total_loss = sum([w*unit*l for w,l in zip(weights, loss_per_unit)])
+    # total_loss
+    total_loss = sum([w*unit*l for w,l in zip(weights, loss_per_unit)])
 
     # 最大損失制限
     if total_loss > max_loss and total_loss > 0:
@@ -96,7 +92,9 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
         weights = [w*factor for w in weights]
         total_loss = max_loss
 
+    # 平均建値計算（加重平均）
     avg_calc = sum([w*p for w,p in zip(weights, prices)]) / sum(weights)
+
     return {
         "prices": prices,
         "weights": weights,
@@ -143,7 +141,6 @@ if mode=="成行起点型":
 
 # 計算ボタン
 if st.button("計算"):
-    # USD建てペアはUSD/JPY取得
     usd_jpy_rate = 1.0
     if pair=="GOLD" or (not pair.endswith("JPY") and pair!="GOLD"):
         usd_jpy_rate = fetch_usdjpy()
