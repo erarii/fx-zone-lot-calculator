@@ -34,16 +34,10 @@ def get_decimal(pair):
 # 最新レート取得（USD建て基準）
 # -------------------------
 def fetch_rates():
-    """
-    USD建ての各通貨レートとUSDJPYを取得。
-    JPY建て通貨ペアは後で USDJPY を掛けて算出。
-    GOLD はドル建て。
-    """
     try:
         url = "https://cdn.moneyconvert.net/api/latest.json"
         response = requests.get(url, timeout=5)
         data = response.json().get("rates", {})
-        # USDJPY
         usd_jpy = float(data.get("JPY", 150.0))
         return data, usd_jpy
     except:
@@ -60,7 +54,8 @@ def get_pair_rate(pair, rates, usd_jpy):
     elif pair.endswith("JPY"):
         base = pair[:3]
         if base in rates:
-            return float(rates[base]) * usd_jpy  # USD建て×USDJPY
+            # USD建てレートからJPY建てに換算
+            return (1.0 / float(rates[base])) * usd_jpy
         else:
             return usd_jpy
     else:
@@ -135,10 +130,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 # -------------------------
 st.title("分割エントリー計算アプリ（全ペア最新レート対応）")
 
-# モード選択
 mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
-
-# 通貨ペア選択
 pair = st.selectbox("通貨ペア/GOLD", CURRENCY_PAIRS)
 direction = st.radio("方向", ["buy", "sell"])
 decimals = get_decimal(pair)
