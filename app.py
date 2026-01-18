@@ -31,19 +31,19 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# USD/JPY 自動取得
+# 最新レート取得
 # -------------------------
-def fetch_usdjpy():
+def fetch_all_rates():
+    """通貨ペアとGOLDのレートを取得"""
     try:
         url = "https://cdn.moneyconvert.net/api/latest.json"
         response = requests.get(url, timeout=5)
-        data = response.json()
-        usd_jpy = data["rates"].get("JPY")
-        if usd_jpy is None:
-            return None
-        return float(usd_jpy)
+        data = response.json().get("rates", {})
+        # USDJPY は必須
+        usd_jpy = float(data.get("JPY", 150.0))
+        return data, usd_jpy
     except:
-        return None
+        return {}, 150.0
 
 # -------------------------
 # 計算ロジック
@@ -57,7 +57,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 
     unit = LOT_INFO["GOLD"] if pair=="GOLD" else LOT_INFO["FX"]
 
-    # 分割価格（上限-下限を均等分割）
+    # 分割価格
     if division==1:
         prices = [avg_price]
     else:
@@ -70,7 +70,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
     scale = avg_price / current_avg if current_avg != 0 else 1
     weights = [w*scale for w in weights]
 
-    # 損失計算（常に正の値になるように）
+    # 損失計算
     loss_per_unit = []
     for p in prices:
         if direction=="buy":
@@ -78,12 +78,11 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
         else:
             diff = p - stop
         diff = abs(diff)
-        # USD建て・GOLDはUSDJPYを掛けて円換算
+        # USD建て・GOLDは円換算
         if pair=="GOLD" or (not pair.endswith("JPY") and pair!="GOLD"):
             diff *= usd_jpy_rate
         loss_per_unit.append(diff)
 
-    # total_loss
     total_loss = sum([w*unit*l for w,l in zip(weights, loss_per_unit)])
 
     # 最大損失制限
@@ -92,7 +91,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
         weights = [w*factor for w in weights]
         total_loss = max_loss
 
-    # 平均建値計算（加重平均）
+    # 平均建値
     avg_calc = sum([w*p for w,p in zip(weights, prices)]) / sum(weights)
 
     return {
@@ -105,7 +104,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 # -------------------------
 # Streamlit UI
 # -------------------------
-st.title("分割エントリー計算アプリ（ゾーン + 建値平均 + 成行対応）")
+st.title("分割エントリー計算アプリ（最新レート初期値対応）")
 
 # モード選択
 mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
@@ -117,20 +116,30 @@ decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
 # -------------------------
-# 最新レートを取得してデフォルト値に設定
+# 最新レート取得
 # -------------------------
-try:
-    usd_jpy_rate = fetch_usdjpy() or 150.0
-except:
-    usd_jpy_rate = 150.0
+rates_data, usd_jpy_rate = fetch_all_rates()
 
-# 初期レート決定
+# 初期値決定
 if pair=="GOLD":
-    current_price = 1900.0  # 仮のドル建てゴールド価格
+    current_price = 1900.0  # 仮のドル建てGOLD価格
+elif pair in rates_data:
+    current_price = float(rates_data[pair])
 elif pair.endswith("JPY"):
-    current_price = usd_jpy_rate
+    # JPY建て通貨でUSDJPYが必要なら掛ける
+    base = pair[:3]
+    if base in rates_data:
+        current_price = float(rates_data[base])*usd_jpy_rate
+    else:
+        current_price = usd_jpy_rate
 else:
-    current_price = 1.1  # USD建てFXの参考値
+    # USD建てFX
+    base = pair[:3]
+    quote = pair[3:]
+    if base in rates_data and quote=="USD":
+        current_price = float(rates_data[base])
+    else:
+        current_price = 1.1
 
 # ゾーン上限下限・平均建値・ストップ
 upper = st.number_input("ゾーン上限", value=current_price, format=fmt)
@@ -155,13 +164,7 @@ if mode=="成行起点型":
 
 # 計算ボタン
 if st.button("計算"):
-    # USD建てFX/GOLDの円換算
-    if pair=="GOLD" or (not pair.endswith("JPY") and pair!="GOLD"):
-        usd_jpy_display = usd_jpy_rate
-        st.write(f"最新 USD/JPY: {usd_jpy_display:.3f}")
-    else:
-        usd_jpy_display = 1.0
-
+    st.write(f"USD/JPY 最新レート: {usd_jpy_rate:.3f}")
     try:
         result = calc_positions(
             pair=pair,
@@ -173,7 +176,7 @@ if st.button("計算"):
             stop=stop,
             upper=upper,
             lower=lower,
-            usd_jpy_rate=usd_jpy_display
+            usd_jpy_rate=usd_jpy_rate
         )
 
         st.subheader("計算結果")
