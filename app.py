@@ -1,89 +1,128 @@
+# app.py
 import streamlit as st
-from dataclasses import dataclass
-from typing import List
 
-# =========================
-# データ構造
-# =========================
-@dataclass
-class Entry:
-    price: float
-    weight: float
-    lot: float = 0.0
+# --- 設定 ---
+CURRENCY_PAIRS = [
+    "USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "NZDJPY", "CADJPY", "CHFJPY",
+    "EURUSD", "GBPUSD", "AUDUSD", "NZDUSD", "USDCAD", "USDCHF",
+    "GOLD"
+]
 
-# =========================
-# JPY換算ロジック
-# =========================
-def pip_value_jpy(pair: str, usd_jpy: float, lot_size: int):
-    if pair.endswith("JPY"):
-        return 100 * lot_size / 10000
-    elif pair == "GOLD":
-        return usd_jpy
+LOT_INFO = {
+    "FX": 10000,    # 1lot=1万通貨
+    "GOLD": 1       # 1lot=1oz
+}
+
+# --- ユーティリティ関数 ---
+def calc_positions(mode, pair, division, weights, avg_price, max_loss, stop, market_price=None, direction="buy"):
+    """
+    計算ロジック
+    - mode: 'zone' or 'market'
+    - division: 分割数
+    - weights: 入力ウェイトリスト
+    - avg_price: 目標平均建値
+    - max_loss: 最大損失（円）
+    - stop: ストップ価格
+    - market_price: 成行価格
+    - direction: "buy" or "sell"
+    """
+    division = int(division)
+    weights = [float(w) for w in weights]
+
+    # FXかGOLDかで単位
+    unit = LOT_INFO["GOLD"] if pair=="GOLD" else LOT_INFO["FX"]
+
+    # --- 価格計算 ---
+    if mode == "zone":
+        # 等間隔で上限下限を仮定
+        if direction=="buy":
+            upper = avg_price + 0.5*(avg_price - stop)  # 推奨:下限ストップから平均を基準に上限仮定
+            lower = stop
+        else:
+            lower = avg_price - 0.5*(stop - avg_price)
+            upper = stop
+        prices = [upper - i*(upper-lower)/(division-1) for i in range(division)]
+    elif mode == "market":
+        if not market_price:
+            st.error("成行価格を入力してください")
+            return
+        # 成行がゾーン上限（買い）or下限（売り）
+        if direction=="buy":
+            upper = market_price
+            lower = stop
+            prices = [upper - i*(upper-lower)/(division-1) for i in range(division)]
+        else:
+            lower = market_price
+            upper = stop
+            prices = [lower + i*(upper-lower)/(division-1) for i in range(division)]
     else:
-        return 100 * usd_jpy * lot_size / 10000
+        st.error("modeエラー")
+        return
 
-# =========================
-# 平均建値計算
-# =========================
-def weighted_average(entries: List[Entry]):
-    total_w = sum(e.weight for e in entries)
-    return sum(e.price * e.weight for e in entries) / total_w
+    # --- ロット調整 ---
+    # 建値平均に合わせてスケーリング
+    total_weighted_price = sum([w*p for w,p in zip(weights, prices)])
+    total_weight = sum(weights)
+    current_avg = total_weighted_price / total_weight
 
-# =========================
-# ロット自動計算
-# =========================
-def calculate_lots(entries, avg_target, stop_price, max_loss_jpy, pip_jpy):
-    avg_price = weighted_average(entries)
-    risk_per_lot = abs(avg_price - stop_price) * pip_jpy
+    scale = 1
+    if current_avg != avg_price:
+        scale = 1  # 初期はスケール1、後で最大損失対応
+        # ロットをスケーリング
+        weights = [w * (avg_price / current_avg) for w in weights]
 
-    total_weight = sum(e.weight for e in entries)
-    total_lot = max_loss_jpy / risk_per_lot
+    # --- 最大損失チェック ---
+    # 含み損計算
+    if direction=="buy":
+        loss_per_unit = [max(0, p - stop) for p in prices]
+    else:
+        loss_per_unit = [max(0, stop - p) for p in prices]
 
-    for e in entries:
-        e.lot = total_lot * (e.weight / total_weight)
+    total_loss = sum([w*u*l for w,u,l in zip(weights, [unit]*division, loss_per_unit)])
+    # 最大損失超過時にスケール調整
+    if total_loss > max_loss:
+        factor = max_loss / total_loss
+        weights = [w*factor for w in weights]
+        total_loss = max_loss
 
-    return entries, avg_price, total_lot
+    return {
+        "prices": prices,
+        "weights": weights,
+        "avg_price": sum([w*p for w,p in zip(weights, prices)])/sum(weights),
+        "total_loss": total_loss
+    }
 
-# =========================
-# UI
-# =========================
-st.title("建値平均ベース ロット計算")
+# --- Streamlit UI ---
+st.title("分割エントリー計算アプリ（平均建値入力対応）")
 
-pair = st.selectbox(
-    "通貨ペア",
-    ["USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "NZDJPY", "CADJPY", "CHFJPY",
-     "EURUSD", "GBPUSD", "AUDUSD", "NZDUSD", "USDCAD", "USDCHF", "GOLD"]
-)
+mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
+mode_key = "zone" if mode=="事前ゾーン型" else "market"
 
-usd_jpy = st.number_input("USDJPY レート", value=150.0)
+pair = st.selectbox("通貨ペア/GOLD", CURRENCY_PAIRS)
+direction = st.radio("方向", ["buy", "sell"])
 
-lot_type = st.selectbox("1lot単位", ["1万通貨（GMO）", "10万通貨"])
-lot_size = 10000 if lot_type == "1万通貨（GMO）" else 100000
+division = st.number_input("分割数", min_value=2, max_value=5, value=3, step=1)
 
-max_loss = st.number_input("許容最大損失（円）", value=10000)
-stop_price = st.number_input("ストップロス価格")
+weights_input = st.text_input("ウェイト（カンマ区切り）例：2,2,4", value="2,2,4")
+weights = [float(w.strip()) for w in weights_input.split(",")]
 
-st.subheader("エントリー設定")
+avg_price = st.number_input("目標平均建値", value=150.0 if "JPY" in pair else 1.0)
+stop = st.number_input("ストップ価格", value=149.5 if "JPY" in pair else 0.995)
+max_loss = st.number_input("最大損失（円）", value=5000.0)
 
-prices = st.text_input("エントリー価格（カンマ区切り）", "100,95,90")
-weights = st.text_input("ウェイト（カンマ区切り）", "2,2,4")
+market_price = None
+if mode_key=="market":
+    market_price = st.number_input("成行価格", value=150.1 if "JPY" in pair else 1.001)
 
 if st.button("計算"):
-    price_list = list(map(float, prices.split(",")))
-    weight_list = list(map(float, weights.split(",")))
-
-    entries = [Entry(p, w) for p, w in zip(price_list, weight_list)]
-
-    pip_jpy = pip_value_jpy(pair, usd_jpy, lot_size)
-
-    entries, avg_price, total_lot = calculate_lots(
-        entries, avg_target=None, stop_price=stop_price,
-        max_loss_jpy=max_loss, pip_jpy=pip_jpy
+    result = calc_positions(
+        mode=mode_key, pair=pair, division=division, weights=weights,
+        avg_price=avg_price, max_loss=max_loss, stop=stop,
+        market_price=market_price, direction=direction
     )
-
-    st.markdown("### 結果")
-    st.write(f"**平均建値**：{avg_price:.4f}")
-    st.write(f"**総ロット**：{total_lot:.2f}")
-
-    for i, e in enumerate(entries, 1):
-        st.write(f"{i}. 価格 {e.price} / ロット {e.lot:.2f}")
+    if result:
+        st.subheader("計算結果")
+        for i,(p,w) in enumerate(zip(result["prices"], result["weights"])):
+            st.write(f"ポジション{i+1}: レート {p:.4f}, ロット {w:.4f}")
+        st.write(f"計算平均建値: {result['avg_price']:.4f}")
+        st.write(f"最大損失（円換算）: {result['total_loss']:.2f}")
