@@ -1,6 +1,5 @@
 import streamlit as st
 import requests
-import yfinance as yf
 
 # -------------------------
 # 設定
@@ -35,14 +34,11 @@ def fetch_fx_rates():
         return {}, 150.0
 
 # -------------------------
-# GOLD（XAUUSD） yfinance
+# GOLD（擬似 XAUUSD）
 # -------------------------
-def fetch_gold_price():
-    try:
-        data = yf.Ticker("XAUUSD=X").history(period="1d")
-        return float(data["Close"].iloc[-1])
-    except:
-        return 1900.0
+def fetch_gold_price(usd_jpy):
+    gold_jpy = 10000  # 金1gの円価格（相場近似）
+    return gold_jpy / usd_jpy
 
 # -------------------------
 # 通貨ペアレート取得
@@ -133,7 +129,7 @@ decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
 fx_rates, usd_jpy_rate = fetch_fx_rates()
-gold_price = fetch_gold_price()
+gold_price = fetch_gold_price(usd_jpy_rate)
 
 current_price = get_pair_rate(pair, fx_rates, usd_jpy_rate, gold_price)
 
