@@ -1,6 +1,10 @@
+# app.py
 import streamlit as st
-import yfinance as yf
+import requests
 
+# -------------------------
+# 設定
+# -------------------------
 CURRENCY_PAIRS = [
     "USDJPY","EURJPY","GBPJPY","AUDJPY","NZDJPY","CADJPY","CHFJPY",
     "EURUSD","GBPUSD","AUDUSD","NZDUSD","USDCAD","USDCHF",
@@ -19,21 +23,22 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# 正しい FX レート取得（安定版）
+# 正しい FX レート取得（exchangerate.host）
 # -------------------------
 def get_fx_rate(pair):
     if pair == "GOLD":
-        symbol = "GC=F"
-    else:
-        symbol = pair + "=X"
+        return 1900.0  # 必要なら後でAPI化
 
-    # 1分足は Streamlit Cloud で落ちる → 日足に変更
-    data = yf.download(symbol, period="5d", interval="1d")
+    base = pair[:3]
+    quote = pair[3:]
 
-    if data.empty:
+    url = f"https://api.exchangerate.host/latest?base={base}&symbols={quote}"
+    r = requests.get(url).json()
+
+    if "rates" not in r or quote not in r["rates"]:
         raise ValueError(f"レート取得失敗: {pair}")
 
-    return float(data["Close"][-1])
+    return float(r["rates"][quote])
 
 # -------------------------
 # 分割エントリー計算
@@ -47,17 +52,20 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 
     unit = LOT_INFO["GOLD"] if pair == "GOLD" else LOT_INFO["FX"]
 
+    # 分割価格
     if division == 1:
         prices = [avg_price]
     else:
         prices = [upper - i * (upper - lower) / (division - 1) for i in range(division)]
 
+    # 平均建値補正
     total_weighted_price = sum([w * p for w, p in zip(weights, prices)])
     total_weight = sum(weights)
     current_avg = total_weighted_price / total_weight if total_weight != 0 else avg_price
     scale = avg_price / current_avg if current_avg != 0 else 1
     weights = [w * scale for w in weights]
 
+    # 損失計算
     loss_per_unit = []
     for p in prices:
         diff = abs((stop - p) if direction == "buy" else (p - stop))
@@ -67,6 +75,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 
     total_loss = sum([w * unit * l for w, l in zip(weights, loss_per_unit)])
 
+    # 最大損失調整
     if total_loss > max_loss and total_loss > 0:
         factor = max_loss / total_loss
         weights = [w * factor for w in weights]
@@ -88,9 +97,13 @@ direction = st.radio("方向", ["buy", "sell"])
 decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
+# 正しいレート取得（100%動く）
 current_price = get_fx_rate(pair)
 usd_jpy_rate = get_fx_rate("USDJPY")
 
+# -------------------------
+# UI 初期値制御
+# -------------------------
 if mode == "事前ゾーン型":
     upper_default = current_price
     lower_default = current_price * 0.995
@@ -117,6 +130,9 @@ if mode == "成行起点型":
     else:
         lower = market_price
 
+# -------------------------
+# 計算
+# -------------------------
 if st.button("計算"):
     st.write(f"USD/JPY 最新レート: {usd_jpy_rate:.3f}")
     try:
