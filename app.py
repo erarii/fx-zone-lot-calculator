@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import requests
 
@@ -22,7 +23,7 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# 最新レート取得
+# 最新レート取得（USD基準）
 # -------------------------
 def fetch_rates():
     try:
@@ -35,31 +36,48 @@ def fetch_rates():
         return {}, 150.0
 
 # -------------------------
-# ペアレート取得
+# ペアレート取得（一般的な向きに強制変換）
 # -------------------------
 def get_pair_rate(pair, rates, usd_jpy):
+    # GOLD は固定
     if pair == "GOLD":
         return 1900.0
-    elif pair == "USDJPY":
+
+    base = pair[:3]
+    quote = pair[3:]
+
+    # USDJPY
+    if pair == "USDJPY":
         return usd_jpy
-    elif pair.endswith("JPY"):
-        base = pair[:3]
+
+    # クロス円（XXXJPY）
+    if quote == "JPY":
         if base == "USD":
             return usd_jpy
         elif base in rates:
             return usd_jpy / float(rates[base])
         else:
             return usd_jpy
-    else:
-        base, quote = pair[:3], pair[3:]
-        if quote == "USD" and base in rates:
-            return float(rates[base])
-        elif base == "USD" and quote in rates:
-            return float(rates[quote])
-        elif base in rates and quote in rates:
-            return float(rates[base]) / float(rates[quote])
-        else:
-            return 1.0
+
+    # -------------------------
+    # ここから非JPY FX
+    # API は「1 USD = rates[XXX]」
+    # → USD が左に来ると一般的な向きと逆になる
+    # -------------------------
+
+    # USD/XXX → XXX/USD に反転
+    if base == "USD" and quote in rates:
+        return 1 / float(rates[quote])
+
+    # XXX/USD → そのまま
+    if quote == "USD" and base in rates:
+        return float(rates[base])
+
+    # XXX/YYY → (XXX/USD) / (YYY/USD)
+    if base in rates and quote in rates:
+        return float(rates[base]) / float(rates[quote])
+
+    return 1.0
 
 # -------------------------
 # 分割エントリー計算
@@ -122,7 +140,7 @@ rates_data, usd_jpy_rate = fetch_rates()
 current_price = get_pair_rate(pair, rates_data, usd_jpy_rate)
 
 # -------------------------
-# UI 初期値の制御（ここが修正ポイント）
+# UI 初期値制御
 # -------------------------
 if mode == "事前ゾーン型":
     upper_default = current_price
@@ -151,7 +169,7 @@ if mode == "成行起点型":
         lower = market_price
 
 # -------------------------
-# 計算ボタン
+# 計算
 # -------------------------
 if st.button("計算"):
     st.write(f"USD/JPY 最新レート: {usd_jpy_rate:.3f}")
