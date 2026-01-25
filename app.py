@@ -23,7 +23,7 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# 最新レート取得（USD基準）
+# 最新レート取得（API）
 # -------------------------
 def fetch_rates():
     try:
@@ -36,17 +36,39 @@ def fetch_rates():
         return {}, 150.0
 
 # -------------------------
+# API の基準通貨を自動判定して USD 基準に統一
+# -------------------------
+def normalize_rate(currency, rates):
+    """
+    API の rates[currency] が USD 基準か currency 基準かを自動判定して
+    常に「1 USD = X currency」に統一して返す。
+    """
+    if currency not in rates:
+        return None
+
+    r = float(rates[currency])
+
+    if r == 0:
+        return None
+
+    # r > 5 → 1 currency = r USD → 1 USD = 1/r currency
+    if r > 5:
+        return 1 / r
+
+    # r < 5 → 1 USD = r currency
+    return r
+
+# -------------------------
 # ペアレート取得（一般的な向きに強制変換）
 # -------------------------
 def get_pair_rate(pair, rates, usd_jpy):
-    # GOLD は固定
     if pair == "GOLD":
         return 1900.0
 
     base = pair[:3]
     quote = pair[3:]
 
-    # USDJPY
+    # USDJPY は別処理
     if pair == "USDJPY":
         return usd_jpy
 
@@ -54,28 +76,26 @@ def get_pair_rate(pair, rates, usd_jpy):
     if quote == "JPY":
         if base == "USD":
             return usd_jpy
-        elif base in rates:
-            return usd_jpy / float(rates[base])
-        else:
-            return usd_jpy
+        n_base = normalize_rate(base, rates)
+        if n_base:
+            return usd_jpy / n_base
+        return usd_jpy
 
-    # -------------------------
-    # ここから非JPY FX
-    # API は「1 USD = rates[XXX]」
-    # → USD が左に来ると一般的な向きと逆になる
-    # -------------------------
-
-    # USD/XXX → XXX/USD に反転
-    if base == "USD" and quote in rates:
-        return 1 / float(rates[quote])
+    # 非JPY FX
+    n_base = normalize_rate(base, rates)
+    n_quote = normalize_rate(quote, rates)
 
     # XXX/USD → そのまま
-    if quote == "USD" and base in rates:
-        return float(rates[base])
+    if quote == "USD" and n_base:
+        return n_base
+
+    # USD/XXX → XXX/USD に反転
+    if base == "USD" and n_quote:
+        return 1 / n_quote
 
     # XXX/YYY → (XXX/USD) / (YYY/USD)
-    if base in rates and quote in rates:
-        return float(rates[base]) / float(rates[quote])
+    if n_base and n_quote:
+        return n_base / n_quote
 
     return 1.0
 
