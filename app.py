@@ -1,6 +1,7 @@
 # app.py
 import streamlit as st
 import requests
+import re
 
 # -------------------------
 # 設定
@@ -23,17 +24,7 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# USD 基準レートを一括取得（最重要）
-# -------------------------
-def load_usd_rates():
-    url = "https://api.exchangerate.host/latest?base=USD"
-    r = requests.get(url, timeout=5).json()
-    return r.get("rates", {})
-
-USD_RATES = load_usd_rates()
-
-# -------------------------
-# 全通貨ペアを正しく計算（クロス円含む）
+# Google Finance からレート取得（最強・最安定）
 # -------------------------
 def get_fx_rate(pair):
     if pair == "GOLD":
@@ -42,17 +33,25 @@ def get_fx_rate(pair):
     base = pair[:3]
     quote = pair[3:]
 
-    # USD/XXX = USD_RATES[XXX]
-    if base == "USD":
-        return USD_RATES.get(quote)
+    # 正方向
+    url = f"https://www.google.com/finance/quote/{base}-{quote}"
+    try:
+        html = requests.get(url, timeout=5).text
+        m = re.search(r'"price":{"raw":([\d\.]+)', html)
+        if m:
+            return float(m.group(1))
+    except:
+        pass
 
-    # XXX/USD = 1 / USD_RATES[XXX]
-    if quote == "USD":
-        return 1 / USD_RATES.get(base)
-
-    # クロス XXX/YYY = (XXX/USD) / (YYY/USD)
-    if base in USD_RATES and quote in USD_RATES:
-        return (1 / USD_RATES[base]) / (1 / USD_RATES[quote])
+    # 逆方向
+    url_rev = f"https://www.google.com/finance/quote/{quote}-{base}"
+    try:
+        html = requests.get(url_rev, timeout=5).text
+        m = re.search(r'"price":{"raw":([\d\.]+)', html)
+        if m:
+            return 1 / float(m.group(1))
+    except:
+        pass
 
     return None
 
@@ -100,7 +99,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 # -------------------------
 # Streamlit UI
 # -------------------------
-st.title("分割エントリー計算アプリ（正しい FX レート版）")
+st.title("分割エントリー計算アプリ（Google Finance レート版）")
 
 mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
 pair = st.selectbox("通貨ペア/GOLD", CURRENCY_PAIRS)
@@ -110,7 +109,7 @@ decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
 # -------------------------
-# レート取得（絶対に None にならない）
+# レート取得（絶対に落ちない）
 # -------------------------
 current_price = get_fx_rate(pair)
 if current_price is None:
