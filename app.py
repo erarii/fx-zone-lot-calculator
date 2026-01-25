@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import yfinance as yf
 
 # -------------------------
 # 設定
@@ -7,7 +8,7 @@ import requests
 CURRENCY_PAIRS = [
     "USDJPY","EURJPY","GBPJPY","AUDJPY","NZDJPY","CADJPY","CHFJPY",
     "EURUSD","GBPUSD","AUDUSD","NZDUSD","USDCAD","USDCHF",
-    "GOLD"  # XAUUSD として扱う
+    "GOLD"
 ]
 
 LOT_INFO = {"FX": 10000, "GOLD": 1}
@@ -34,42 +35,32 @@ def fetch_fx_rates():
         return {}, 150.0
 
 # -------------------------
-# GOLD（XAUUSD）
+# GOLD（XAUUSD） yfinance
 # -------------------------
 def fetch_gold_price():
     try:
-        r = requests.get("https://api.metals.live/v1/spot", timeout=5).json()
-        for item in r:
-            if "gold" in item:
-                return float(item["gold"])
+        data = yf.Ticker("XAUUSD=X").history(period="1d")
+        return float(data["Close"].iloc[-1])
     except:
-        pass
-    return 1900.0  # フォールバック
+        return 1900.0
 
 # -------------------------
-# 通貨ペアレート取得（UI は全部「普通の向き」）
+# 通貨ペアレート取得
 # -------------------------
 def get_pair_rate(pair, rates, usd_jpy, gold_price):
     if pair == "GOLD":
-        return gold_price  # XAUUSD
+        return gold_price
 
     base = pair[:3]
     quote = pair[3:]
 
-    # moneyconvert: 1 USD = rates[XXX] XXX
-    # → USDXXX = rates[XXX]
-    # → XXXUSD = 1 / rates[XXX]
-
-    # USDXXX
     if base == "USD" and quote != "USD":
         return float(rates.get(quote, 1.0))
 
-    # XXXUSD
     if quote == "USD" and base != "USD":
         v = float(rates.get(base, 0))
         return 1.0 / v if v != 0 else 1.0
 
-    # XXXJPY
     if quote == "JPY" and base != "USD":
         v = float(rates.get(base, 0))
         if v != 0:
@@ -77,7 +68,6 @@ def get_pair_rate(pair, rates, usd_jpy, gold_price):
             return xxxusd * usd_jpy
         return usd_jpy
 
-    # XXXYYY
     v_base = float(rates.get(base, 0))
     v_quote = float(rates.get(quote, 0))
     if v_base != 0:
@@ -96,20 +86,17 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 
     unit = LOT_INFO["GOLD"] if pair == "GOLD" else LOT_INFO["FX"]
 
-    # 価格配列
     if division == 1:
         prices = [avg_price]
     else:
         prices = [upper - i * (upper - lower) / (division - 1) for i in range(division)]
 
-    # ウェイト調整
     total_weighted_price = sum(w * p for w, p in zip(weights, prices))
     total_weight = sum(weights)
     current_avg = total_weighted_price / total_weight if total_weight else avg_price
     scale = avg_price / current_avg if current_avg else 1.0
     weights = [w * scale for w in weights]
 
-    # 損失計算
     loss_per_unit = []
     for p in prices:
         diff = abs((stop - p) if direction == "buy" else (p - stop))
@@ -119,7 +106,6 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 
     total_loss = sum(w * unit * l for w, l in zip(weights, loss_per_unit))
 
-    # 最大損失調整
     if total_loss > max_loss:
         factor = max_loss / total_loss
         weights = [w * factor for w in weights]
@@ -135,7 +121,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
     }
 
 # -------------------------
-# Streamlit UI
+# UI
 # -------------------------
 st.title("分割エントリー計算アプリ（FX + GOLD 完全版）")
 
@@ -146,13 +132,11 @@ direction = st.radio("方向", ["buy", "sell"])
 decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
-# レート取得
 fx_rates, usd_jpy_rate = fetch_fx_rates()
 gold_price = fetch_gold_price()
 
 current_price = get_pair_rate(pair, fx_rates, usd_jpy_rate, gold_price)
 
-# ゾーン
 if mode == "事前ゾーン型":
     upper_default = current_price
     lower_default = current_price * 0.995
@@ -183,18 +167,14 @@ if st.button("計算"):
     st.write(f"USDJPY: {usd_jpy_rate:.3f}")
     st.write(f"GOLD(XAUUSD): {gold_price:.2f}")
 
-    try:
-        result = calc_positions(
-            pair, direction, division, [float(w) for w in weights],
-            avg_price, max_loss, stop, upper, lower, usd_jpy_rate
-        )
+    result = calc_positions(
+        pair, direction, division, [float(w) for w in weights],
+        avg_price, max_loss, stop, upper, lower, usd_jpy_rate
+    )
 
-        st.subheader("計算結果")
-        for i, (p, w) in enumerate(zip(result["prices"], result["weights"])):
-            st.write(f"{i+1}番目: レート {p:.{decimals}f}, ロット {w:.4f}")
+    st.subheader("計算結果")
+    for i, (p, w) in enumerate(zip(result["prices"], result["weights"])):
+        st.write(f"{i+1}番目: レート {p:.{decimals}f}, ロット {w:.4f}")
 
-        st.write(f"平均建値: {result['avg_price']:.{decimals}f}")
-        st.write(f"最大損失: {result['total_loss']:.2f}")
-
-    except Exception as e:
-        st.error(f"エラー: {e}")
+    st.write(f"平均建値: {result['avg_price']:.{decimals}f}")
+    st.write(f"最大損失: {result['total_loss']:.2f}")
