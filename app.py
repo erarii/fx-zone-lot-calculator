@@ -34,23 +34,15 @@ def fetch_fx_rates():
         return {}, 150.0
 
 # -------------------------
-# GOLD（XAUUSD）: 外部API → 失敗時だけ 5000
+# GOLD（XAUUSD）TradingEconomics → fallback 5000
 # -------------------------
 def fetch_gold_price():
     try:
-        # ここを実際に使える XAUUSD API に差し替える
-        # 例: goldapi.io
-        # url = "https://www.goldapi.io/api/XAU/USD"
-        # headers = {"x-access-token": "goldapi-xxxxxxxxxxxx"}
-        # r = requests.get(url, headers=headers, timeout=5).json()
-        # return float(r["price"])
-
-        # ダミー例（XAUUSD を返す JSON を想定）
-        url = "https://your-real-xauusd-endpoint.example.com"
+        url = "https://api.tradingeconomics.com/markets/symbol/XAUUSD?c=guest:guest"
         r = requests.get(url, timeout=5).json()
-        return float(r["xauusd"])
+        return float(r[0]["Last"])
     except:
-        return 5000.0  # 取れなかったときだけ 5000
+        return 5000.0
 
 # -------------------------
 # 通貨ペアレート取得
@@ -131,7 +123,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 # -------------------------
 # UI
 # -------------------------
-st.title("分割エントリー計算アプリ（FX + GOLD）")
+st.title("分割エントリー計算アプリ（FX + GOLD 完全版）")
 
 mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
 pair = st.selectbox("通貨ペア/GOLD", CURRENCY_PAIRS)
