@@ -23,43 +23,38 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# 正しい FX レート取得（クロス円は自前計算）
+# USD 基準レートを一括取得（最重要）
+# -------------------------
+def load_usd_rates():
+    url = "https://api.exchangerate.host/latest?base=USD"
+    r = requests.get(url, timeout=5).json()
+    return r.get("rates", {})
+
+USD_RATES = load_usd_rates()
+
+# -------------------------
+# 全通貨ペアを正しく計算（クロス円含む）
 # -------------------------
 def get_fx_rate(pair):
     if pair == "GOLD":
-        return 1900.0  # 必要なら後でAPI化
+        return 1900.0
 
     base = pair[:3]
     quote = pair[3:]
 
-    # USD が絡むペアは API から直接取得
-    if base == "USD" or quote == "USD":
-        url = f"https://api.exchangerate.host/latest?base={base}&symbols={quote}"
-        r = requests.get(url).json()
-        if "rates" in r and quote in r["rates"]:
-            return float(r["rates"][quote])
-        else:
-            return None  # 後で fallback
+    # USD/XXX = USD_RATES[XXX]
+    if base == "USD":
+        return USD_RATES.get(quote)
 
-    # USD が絡まないペア（クロス円含む）は自前計算
-    # base/quote = (base/USD) / (quote/USD)
+    # XXX/USD = 1 / USD_RATES[XXX]
+    if quote == "USD":
+        return 1 / USD_RATES.get(base)
 
-    # base/USD
-    url1 = f"https://api.exchangerate.host/latest?base={base}&symbols=USD"
-    r1 = requests.get(url1).json()
-    if "rates" not in r1 or "USD" not in r1["rates"]:
-        return None
-    base_usd = float(r1["rates"]["USD"])
+    # クロス XXX/YYY = (XXX/USD) / (YYY/USD)
+    if base in USD_RATES and quote in USD_RATES:
+        return (1 / USD_RATES[base]) / (1 / USD_RATES[quote])
 
-    # quote/USD
-    url2 = f"https://api.exchangerate.host/latest?base={quote}&symbols=USD"
-    r2 = requests.get(url2).json()
-    if "rates" not in r2 or "USD" not in r2["rates"]:
-        return None
-    quote_usd = float(r2["rates"]["USD"])
-
-    # base/quote = (base/USD) / (quote/USD)
-    return base_usd / quote_usd
+    return None
 
 # -------------------------
 # 分割エントリー計算
@@ -115,7 +110,7 @@ decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
 # -------------------------
-# レート取得（絶対に None にならないように fallback）
+# レート取得（絶対に None にならない）
 # -------------------------
 current_price = get_fx_rate(pair)
 if current_price is None:
