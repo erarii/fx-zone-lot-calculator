@@ -8,7 +8,7 @@ import requests
 CURRENCY_PAIRS = [
     "USDJPY","EURJPY","GBPJPY","AUDJPY","NZDJPY","CADJPY","CHFJPY",
     "EURUSD","GBPUSD","AUDUSD","NZDUSD","USDCAD","USDCHF",
-    "GOLD"
+    "GOLD"  # XAUUSD として扱う
 ]
 
 LOT_INFO = {"FX": 10000, "GOLD": 1}
@@ -27,7 +27,7 @@ def get_decimal(pair):
 #   rates["EUR"] = USDEUR
 #   rates["JPY"] = USDJPY
 # -------------------------
-def fetch_rates():
+def fetch_fx_rates():
     url = "https://cdn.moneyconvert.net/api/latest.json"
     r = requests.get(url, timeout=5).json()
     rates = r.get("rates", {})
@@ -35,11 +35,26 @@ def fetch_rates():
     return rates, usd_jpy
 
 # -------------------------
+# GOLD(XAUUSD) の直近値取得
+#   失敗したら 1900.0 にフォールバック
+# -------------------------
+def fetch_gold_price():
+    try:
+        r = requests.get("https://api.metals.live/v1/spot", timeout=5).json()
+        for item in r:
+            if "gold" in item:
+                return float(item["gold"])
+    except Exception:
+        pass
+    return 1900.0
+
+# -------------------------
 # 通貨ペアレート取得（UI は全部「普通の向き」）
 # -------------------------
-def get_pair_rate(pair, rates, usd_jpy):
+def get_pair_rate(pair, rates, usd_jpy, gold_price):
+    # GOLD は XAUUSD として扱う
     if pair == "GOLD":
-        return 1900.0
+        return gold_price
 
     base = pair[:3]
     quote = pair[3:]
@@ -59,7 +74,7 @@ def get_pair_rate(pair, rates, usd_jpy):
     # XXXUSD（例: EURUSD, GBPUSD）
     if quote == "USD" and base != "USD":
         if base in rates and float(rates[base]) != 0:
-            return 1.0 / float(rates[base])  # XXX→USD（ここで 1 超える）
+            return 1.0 / float(rates[base])  # XXX→USD
         return 1.0
 
     # --- クロス円 XXXJPY（例: EURJPY, GBPJPY）---
@@ -96,26 +111,31 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 
     unit = LOT_INFO["GOLD"] if pair == "GOLD" else LOT_INFO["FX"]
 
+    # 価格配列
     if division == 1:
         prices = [avg_price]
     else:
         prices = [upper - i * (upper - lower) / (division - 1) for i in range(division)]
 
+    # ウェイトを目標平均建値に合わせてスケーリング
     total_weighted_price = sum(w * p for w, p in zip(weights, prices))
     total_weight = sum(weights)
     current_avg = total_weighted_price / total_weight if total_weight != 0 else avg_price
     scale = avg_price / current_avg if current_avg != 0 else 1.0
     weights = [w * scale for w in weights]
 
+    # 損失計算
     loss_per_unit = []
     for p in prices:
         diff = abs((stop - p) if direction == "buy" else (p - stop))
+        # 円換算が必要なのは「JPY で終わらないペア」と GOLD
         if pair == "GOLD" or not pair.endswith("JPY"):
             diff *= usd_jpy_rate
         loss_per_unit.append(diff)
 
     total_loss = sum(w * unit * l for w, l in zip(weights, loss_per_unit))
 
+    # 最大損失でスケーリング
     if total_loss > max_loss and total_loss > 0:
         factor = max_loss / total_loss
         weights = [w * factor for w in weights]
@@ -133,7 +153,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 # -------------------------
 # Streamlit UI
 # -------------------------
-st.title("分割エントリー計算アプリ（moneyconvert・向き補正済み）")
+st.title("分割エントリー計算アプリ（FX + GOLD 完全版）")
 
 mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
 pair = st.selectbox("通貨ペア/GOLD", CURRENCY_PAIRS)
@@ -142,8 +162,11 @@ direction = st.radio("方向", ["buy", "sell"])
 decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
-rates_data, usd_jpy_rate = fetch_rates()
-current_price = get_pair_rate(pair, rates_data, usd_jpy_rate)
+# レート取得
+fx_rates, usd_jpy_rate = fetch_fx_rates()
+gold_price = fetch_gold_price()
+
+current_price = get_pair_rate(pair, fx_rates, usd_jpy_rate, gold_price)
 
 if mode == "事前ゾーン型":
     upper_default = current_price
@@ -172,7 +195,8 @@ if mode == "成行起点型":
         lower = market_price
 
 if st.button("計算"):
-    st.write(f"USD/JPY moneyconvert レート: {usd_jpy_rate:.3f}")
+    st.write(f"USD/JPY (moneyconvert): {usd_jpy_rate:.3f}")
+    st.write(f"GOLD (XAUUSD): {gold_price:.2f}")
     try:
         result = calc_positions(
             pair, direction, division, [float(w) for w in weights],
