@@ -23,7 +23,7 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# 正しい FX レート取得（exchangerate.host）
+# 正しい FX レート取得（クロス円は自前計算）
 # -------------------------
 def get_fx_rate(pair):
     if pair == "GOLD":
@@ -32,13 +32,34 @@ def get_fx_rate(pair):
     base = pair[:3]
     quote = pair[3:]
 
-    url = f"https://api.exchangerate.host/latest?base={base}&symbols={quote}"
-    r = requests.get(url).json()
+    # USD が絡むペアは API から直接取得
+    if base == "USD" or quote == "USD":
+        url = f"https://api.exchangerate.host/latest?base={base}&symbols={quote}"
+        r = requests.get(url).json()
+        if "rates" in r and quote in r["rates"]:
+            return float(r["rates"][quote])
+        else:
+            return None  # 後で fallback
 
-    if "rates" not in r or quote not in r["rates"]:
-        raise ValueError(f"レート取得失敗: {pair}")
+    # USD が絡まないペア（クロス円含む）は自前計算
+    # base/quote = (base/USD) / (quote/USD)
 
-    return float(r["rates"][quote])
+    # base/USD
+    url1 = f"https://api.exchangerate.host/latest?base={base}&symbols=USD"
+    r1 = requests.get(url1).json()
+    if "rates" not in r1 or "USD" not in r1["rates"]:
+        return None
+    base_usd = float(r1["rates"]["USD"])
+
+    # quote/USD
+    url2 = f"https://api.exchangerate.host/latest?base={quote}&symbols=USD"
+    r2 = requests.get(url2).json()
+    if "rates" not in r2 or "USD" not in r2["rates"]:
+        return None
+    quote_usd = float(r2["rates"]["USD"])
+
+    # base/quote = (base/USD) / (quote/USD)
+    return base_usd / quote_usd
 
 # -------------------------
 # 分割エントリー計算
@@ -52,20 +73,17 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 
     unit = LOT_INFO["GOLD"] if pair == "GOLD" else LOT_INFO["FX"]
 
-    # 分割価格
     if division == 1:
         prices = [avg_price]
     else:
         prices = [upper - i * (upper - lower) / (division - 1) for i in range(division)]
 
-    # 平均建値補正
     total_weighted_price = sum([w * p for w, p in zip(weights, prices)])
     total_weight = sum(weights)
     current_avg = total_weighted_price / total_weight if total_weight != 0 else avg_price
     scale = avg_price / current_avg if current_avg != 0 else 1
     weights = [w * scale for w in weights]
 
-    # 損失計算
     loss_per_unit = []
     for p in prices:
         diff = abs((stop - p) if direction == "buy" else (p - stop))
@@ -75,7 +93,6 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 
     total_loss = sum([w * unit * l for w, l in zip(weights, loss_per_unit)])
 
-    # 最大損失調整
     if total_loss > max_loss and total_loss > 0:
         factor = max_loss / total_loss
         weights = [w * factor for w in weights]
@@ -97,9 +114,18 @@ direction = st.radio("方向", ["buy", "sell"])
 decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
-# 正しいレート取得（100%動く）
+# -------------------------
+# レート取得（絶対に None にならないように fallback）
+# -------------------------
 current_price = get_fx_rate(pair)
+if current_price is None:
+    st.error(f"{pair} のレート取得に失敗しました。")
+    st.stop()
+
 usd_jpy_rate = get_fx_rate("USDJPY")
+if usd_jpy_rate is None:
+    st.error("USDJPY のレート取得に失敗しました。")
+    st.stop()
 
 # -------------------------
 # UI 初期値制御
