@@ -1,7 +1,6 @@
 # app.py
 import streamlit as st
 import requests
-import re
 
 # -------------------------
 # 設定
@@ -24,36 +23,66 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# Google Finance からレート取得（最強・最安定）
+# moneyconvert からレート取得（base=USD）
+#   rates["EUR"] = USDEUR
+#   rates["JPY"] = USDJPY
 # -------------------------
-def get_fx_rate(pair):
+def fetch_rates():
+    url = "https://cdn.moneyconvert.net/api/latest.json"
+    r = requests.get(url, timeout=5).json()
+    rates = r.get("rates", {})
+    usd_jpy = float(rates.get("JPY", 150.0))  # USDJPY
+    return rates, usd_jpy
+
+# -------------------------
+# 通貨ペアレート取得（UI は全部「普通の向き」）
+# -------------------------
+def get_pair_rate(pair, rates, usd_jpy):
     if pair == "GOLD":
         return 1900.0
 
     base = pair[:3]
     quote = pair[3:]
 
-    # 正方向
-    url = f"https://www.google.com/finance/quote/{base}-{quote}"
-    try:
-        html = requests.get(url, timeout=5).text
-        m = re.search(r'"price":{"raw":([\d\.]+)', html)
-        if m:
-            return float(m.group(1))
-    except:
-        pass
+    # moneyconvert: 1 USD = rates[XXX] XXX
+    # → USDXXX = rates[XXX]
+    # → XXXUSD = 1 / rates[XXX]
 
-    # 逆方向
-    url_rev = f"https://www.google.com/finance/quote/{quote}-{base}"
-    try:
-        html = requests.get(url_rev, timeout=5).text
-        m = re.search(r'"price":{"raw":([\d\.]+)', html)
-        if m:
-            return 1 / float(m.group(1))
-    except:
-        pass
+    # --- USD が絡むペア ---
 
-    return None
+    # USDXXX（例: USDJPY, USDCHF）
+    if base == "USD" and quote != "USD":
+        if quote in rates:
+            return float(rates[quote])  # USD→quote
+        return 1.0
+
+    # XXXUSD（例: EURUSD, GBPUSD）
+    if quote == "USD" and base != "USD":
+        if base in rates and float(rates[base]) != 0:
+            return 1.0 / float(rates[base])  # XXX→USD（ここで 1 超える）
+        return 1.0
+
+    # --- クロス円 XXXJPY（例: EURJPY, GBPJPY）---
+
+    if quote == "JPY" and base != "USD":
+        # XXXUSD = 1 / rates[XXX]
+        if base in rates and float(rates[base]) != 0:
+            xxxusd = 1.0 / float(rates[base])
+            # XXXJPY = XXXUSD × USDJPY
+            return xxxusd * usd_jpy
+        return usd_jpy
+
+    # --- その他クロス XXXYYY（例: EURGBP, AUDNZD）---
+
+    if base in rates and quote in rates and float(rates[base]) != 0:
+        # XXXUSD = 1 / rates[XXX]
+        # YYYUSD = 1 / rates[YYY]
+        base_usd = 1.0 / float(rates[base])
+        quote_usd = 1.0 / float(rates[quote])
+        # XXXYYY = XXXUSD / YYYUSD
+        return base_usd / quote_usd
+
+    return 1.0
 
 # -------------------------
 # 分割エントリー計算
@@ -72,10 +101,10 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
     else:
         prices = [upper - i * (upper - lower) / (division - 1) for i in range(division)]
 
-    total_weighted_price = sum([w * p for w, p in zip(weights, prices)])
+    total_weighted_price = sum(w * p for w, p in zip(weights, prices))
     total_weight = sum(weights)
     current_avg = total_weighted_price / total_weight if total_weight != 0 else avg_price
-    scale = avg_price / current_avg if current_avg != 0 else 1
+    scale = avg_price / current_avg if current_avg != 0 else 1.0
     weights = [w * scale for w in weights]
 
     loss_per_unit = []
@@ -85,21 +114,26 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
             diff *= usd_jpy_rate
         loss_per_unit.append(diff)
 
-    total_loss = sum([w * unit * l for w, l in zip(weights, loss_per_unit)])
+    total_loss = sum(w * unit * l for w, l in zip(weights, loss_per_unit))
 
     if total_loss > max_loss and total_loss > 0:
         factor = max_loss / total_loss
         weights = [w * factor for w in weights]
         total_loss = max_loss
 
-    avg_calc = sum([w * p for w, p in zip(weights, prices)]) / sum(weights)
+    avg_calc = sum(w * p for w, p in zip(weights, prices)) / sum(weights)
 
-    return {"prices": prices, "weights": weights, "avg_price": avg_calc, "total_loss": total_loss}
+    return {
+        "prices": prices,
+        "weights": weights,
+        "avg_price": avg_calc,
+        "total_loss": total_loss,
+    }
 
 # -------------------------
 # Streamlit UI
 # -------------------------
-st.title("分割エントリー計算アプリ（Google Finance レート版）")
+st.title("分割エントリー計算アプリ（moneyconvert・向き補正済み）")
 
 mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
 pair = st.selectbox("通貨ペア/GOLD", CURRENCY_PAIRS)
@@ -108,22 +142,9 @@ direction = st.radio("方向", ["buy", "sell"])
 decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
-# -------------------------
-# レート取得（絶対に落ちない）
-# -------------------------
-current_price = get_fx_rate(pair)
-if current_price is None:
-    st.error(f"{pair} のレート取得に失敗しました。")
-    st.stop()
+rates_data, usd_jpy_rate = fetch_rates()
+current_price = get_pair_rate(pair, rates_data, usd_jpy_rate)
 
-usd_jpy_rate = get_fx_rate("USDJPY")
-if usd_jpy_rate is None:
-    st.error("USDJPY のレート取得に失敗しました。")
-    st.stop()
-
-# -------------------------
-# UI 初期値制御
-# -------------------------
 if mode == "事前ゾーン型":
     upper_default = current_price
     lower_default = current_price * 0.995
@@ -150,11 +171,8 @@ if mode == "成行起点型":
     else:
         lower = market_price
 
-# -------------------------
-# 計算
-# -------------------------
 if st.button("計算"):
-    st.write(f"USD/JPY 最新レート: {usd_jpy_rate:.3f}")
+    st.write(f"USD/JPY moneyconvert レート: {usd_jpy_rate:.3f}")
     try:
         result = calc_positions(
             pair, direction, division, [float(w) for w in weights],
