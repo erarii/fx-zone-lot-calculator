@@ -7,7 +7,7 @@ import requests
 CURRENCY_PAIRS = [
     "USDJPY","EURJPY","GBPJPY","AUDJPY","NZDJPY","CADJPY","CHFJPY",
     "EURUSD","GBPUSD","AUDUSD","NZDUSD","USDCAD","USDCHF",
-    "GOLD"
+    "GOLD"  # XAUUSD
 ]
 
 LOT_INFO = {"FX": 10000, "GOLD": 1}
@@ -34,11 +34,23 @@ def fetch_fx_rates():
         return {}, 150.0
 
 # -------------------------
-# GOLD（擬似 XAUUSD）
+# GOLD（XAUUSD）: 外部API → 失敗時だけ 5000
 # -------------------------
-def fetch_gold_price(usd_jpy):
-    gold_jpy = 10000  # 金1gの円価格（相場近似）
-    return gold_jpy / usd_jpy
+def fetch_gold_price():
+    try:
+        # ここを実際に使える XAUUSD API に差し替える
+        # 例: goldapi.io
+        # url = "https://www.goldapi.io/api/XAU/USD"
+        # headers = {"x-access-token": "goldapi-xxxxxxxxxxxx"}
+        # r = requests.get(url, headers=headers, timeout=5).json()
+        # return float(r["price"])
+
+        # ダミー例（XAUUSD を返す JSON を想定）
+        url = "https://your-real-xauusd-endpoint.example.com"
+        r = requests.get(url, timeout=5).json()
+        return float(r["xauusd"])
+    except:
+        return 5000.0  # 取れなかったときだけ 5000
 
 # -------------------------
 # 通貨ペアレート取得
@@ -119,7 +131,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 # -------------------------
 # UI
 # -------------------------
-st.title("分割エントリー計算アプリ（FX + GOLD 完全版）")
+st.title("分割エントリー計算アプリ（FX + GOLD）")
 
 mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
 pair = st.selectbox("通貨ペア/GOLD", CURRENCY_PAIRS)
@@ -129,7 +141,7 @@ decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
 fx_rates, usd_jpy_rate = fetch_fx_rates()
-gold_price = fetch_gold_price(usd_jpy_rate)
+gold_price = fetch_gold_price()
 
 current_price = get_pair_rate(pair, fx_rates, usd_jpy_rate, gold_price)
 
