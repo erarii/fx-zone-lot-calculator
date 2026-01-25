@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import yfinance as yf
 
 # -------------------------
 # 設定
@@ -7,7 +8,7 @@ import requests
 CURRENCY_PAIRS = [
     "USDJPY","EURJPY","GBPJPY","AUDJPY","NZDJPY","CADJPY","CHFJPY",
     "EURUSD","GBPUSD","AUDUSD","NZDUSD","USDCAD","USDCHF",
-    "GOLD"  # XAUUSD
+    "GOLD"
 ]
 
 LOT_INFO = {"FX": 10000, "GOLD": 1}
@@ -22,7 +23,7 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# moneyconvert（FX）
+# FX（moneyconvert）
 # -------------------------
 def fetch_fx_rates():
     try:
@@ -34,15 +35,36 @@ def fetch_fx_rates():
         return {}, 150.0
 
 # -------------------------
-# GOLD（XAUUSD）TradingEconomics → fallback 5000
+# GOLD（XAUUSD）①→②→③ fallback 5000
 # -------------------------
 def fetch_gold_price():
+
+    # ① GoldAPI（要APIキー）
+    try:
+        url = "https://www.goldapi.io/api/XAU/USD"
+        headers = {"x-access-token": "goldapi-guest-guest"}  # 仮キー
+        r = requests.get(url, headers=headers, timeout=5).json()
+        return float(r["price"])
+    except:
+        pass
+
+    # ② TradingEconomics
     try:
         url = "https://api.tradingeconomics.com/markets/symbol/XAUUSD?c=guest:guest"
         r = requests.get(url, timeout=5).json()
         return float(r[0]["Last"])
     except:
-        return 5000.0
+        pass
+
+    # ③ Yahoo Finance
+    try:
+        data = yf.Ticker("XAUUSD=X").history(period="1d")
+        return float(data["Close"].iloc[-1])
+    except:
+        pass
+
+    # 全部失敗 → fallback
+    return 5000.0
 
 # -------------------------
 # 通貨ペアレート取得
