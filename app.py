@@ -1,6 +1,6 @@
 # app.py
 import streamlit as st
-import requests
+import yfinance as yf
 
 # -------------------------
 # 設定
@@ -23,81 +23,16 @@ def get_decimal(pair):
         return DECIMALS["USD"]
 
 # -------------------------
-# 最新レート取得（API）
+# 正しい FX レート取得（Yahoo Finance）
 # -------------------------
-def fetch_rates():
-    try:
-        url = "https://cdn.moneyconvert.net/api/latest.json"
-        response = requests.get(url, timeout=5)
-        data = response.json().get("rates", {})
-        usd_jpy = float(data.get("JPY", 150.0))
-        return data, usd_jpy
-    except:
-        return {}, 150.0
-
-# -------------------------
-# API の基準通貨を自動判定して USD 基準に統一
-# -------------------------
-def normalize_rate(currency, rates):
-    """
-    API の rates[currency] が USD 基準か currency 基準かを自動判定して
-    常に「1 USD = X currency」に統一して返す。
-    """
-    if currency not in rates:
-        return None
-
-    r = float(rates[currency])
-
-    if r == 0:
-        return None
-
-    # r > 5 → 1 currency = r USD → 1 USD = 1/r currency
-    if r > 5:
-        return 1 / r
-
-    # r < 5 → 1 USD = r currency
-    return r
-
-# -------------------------
-# ペアレート取得（一般的な向きに強制変換）
-# -------------------------
-def get_pair_rate(pair, rates, usd_jpy):
+def get_fx_rate(pair):
     if pair == "GOLD":
-        return 1900.0
+        data = yf.download("GC=F", period="1d", interval="1m")
+        return float(data["Close"][-1])
 
-    base = pair[:3]
-    quote = pair[3:]
-
-    # USDJPY は別処理
-    if pair == "USDJPY":
-        return usd_jpy
-
-    # クロス円（XXXJPY）
-    if quote == "JPY":
-        if base == "USD":
-            return usd_jpy
-        n_base = normalize_rate(base, rates)
-        if n_base:
-            return usd_jpy / n_base
-        return usd_jpy
-
-    # 非JPY FX
-    n_base = normalize_rate(base, rates)
-    n_quote = normalize_rate(quote, rates)
-
-    # XXX/USD → そのまま
-    if quote == "USD" and n_base:
-        return n_base
-
-    # USD/XXX → XXX/USD に反転
-    if base == "USD" and n_quote:
-        return 1 / n_quote
-
-    # XXX/YYY → (XXX/USD) / (YYY/USD)
-    if n_base and n_quote:
-        return n_base / n_quote
-
-    return 1.0
+    symbol = pair + "=X"
+    data = yf.download(symbol, period="1d", interval="1m")
+    return float(data["Close"][-1])
 
 # -------------------------
 # 分割エントリー計算
@@ -147,7 +82,7 @@ def calc_positions(pair, direction, division, weights, avg_price, max_loss, stop
 # -------------------------
 # Streamlit UI
 # -------------------------
-st.title("分割エントリー計算アプリ（円換算正確版）")
+st.title("分割エントリー計算アプリ（正しい FX レート版）")
 
 mode = st.radio("モード選択", ["事前ゾーン型", "成行起点型"])
 pair = st.selectbox("通貨ペア/GOLD", CURRENCY_PAIRS)
@@ -156,8 +91,9 @@ direction = st.radio("方向", ["buy", "sell"])
 decimals = get_decimal(pair)
 fmt = f"%.{decimals}f"
 
-rates_data, usd_jpy_rate = fetch_rates()
-current_price = get_pair_rate(pair, rates_data, usd_jpy_rate)
+# 正しいレート取得
+current_price = get_fx_rate(pair)
+usd_jpy_rate = get_fx_rate("USDJPY")
 
 # -------------------------
 # UI 初期値制御
